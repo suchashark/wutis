@@ -4,7 +4,7 @@ The script is organized into four logical components:
 
 ### 1. MomentumStrategy (bt.Strategy)
 Handles order execution based on pre-calculated signals. 
-- Includes a lunch-hour filter (12:30–14:00) to avoid mid-day low-liquidity noise.
+- Includes a lunch-hour filter (12:30–14:00)
 - Reads the target_position line (1 for Long, -1 for Short, 0 for Flat) and executes self.buy(), self.sell(), or self.close() accordingly.
 
 ### 2. prepare_momentum_data(df)
