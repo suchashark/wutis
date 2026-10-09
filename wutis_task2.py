@@ -7,37 +7,42 @@ class MomentumStrategy(bt.Strategy):
 
 
     def next(self):
-
-
+        #VWAP (Volume-Weighted Average Price
+        #1 long, buy, upper bound acc noize area      if the market breaches the boundaries of the Noise Area, our strategy initiates positions.
+        #-1 short,sall, lower bound
         target_pos = self.data.target_position[0]
         current_pos = self.position.size
 
         if target_pos == 1 and current_pos <= 0:
             self.buy()
+            #if in short or flat, want long
+            #if in short, closes it and opens long
         elif target_pos == -1 and current_pos >= 0:
             self.sell()
+            #if no cash, lend by brocker
+            #Positions are unwound either at market Close or if there is a crossover to the opposite boundary
+            # In the event of such a crossover, the existing position is closed, and a new one is initiated in
+            # the opposite direction to align with the latest evidence of demand/supply imbalance.
         elif target_pos == 0 and current_pos != 0:
             self.close()
+#send market orders 
 
 def prepare_momentum_data(df):
-    """
-    Pre-calculates the momentum indicators EXACTLY as described in the Concretum Group article.
-    Requires an intraday DataFrame with a DatetimeIndex.
-    """
     if df.index.tz is not None:
-        df.index = df.index.tz_localize(None)
+        df.index = df.index.tz_convert('US/Eastern') # 
+        df.index = df.index.tz_localize(None) #to join tz naive and tz aware
 
-    df = df.copy()
+    df = df.copy() #local variable
     df['day'] = df.index.date
 
     daily_groups = df.groupby('day')
     all_days = df['day'].unique()
 
-    df['vwap'] = np.nan
+    df['vwap'] = np.nan # new null columns, nan because float64
     df['move_open'] = np.nan
     df['sigma_open'] = np.nan
 
-    spy_ret = pd.Series(index=all_days, dtype=float)
+    spy_ret = pd.Series(index=all_days, dtype=float) #by default nan
 
     for d in range(1, len(all_days)):
         current_day = all_days[d]
@@ -46,29 +51,31 @@ def prepare_momentum_data(df):
         current_day_data = daily_groups.get_group(current_day)
         prev_day_data = daily_groups.get_group(prev_day)
 
-        hlc = (current_day_data['high'] + current_day_data['low'] + current_day_data['close']) / 3
-        vol_x_hlc = current_day_data['volume'] * hlc
-        cum_vol_x_hlc = vol_x_hlc.cumsum()
+#Volume Weighted AveragePrice (VWAP) = (S price x volume) / (S volume)
+        hlc = (current_day_data['high'] + current_day_data['low'] + current_day_data['close']) / 3 #price
+        vol_x_hlc = current_day_data['volume'] * hlc # price x volume
+        cum_vol_x_hlc = vol_x_hlc.cumsum() #cumulative sum for every 5 mins
         cum_volume = current_day_data['volume'].cumsum()
         df.loc[current_day_data.index, 'vwap'] = cum_vol_x_hlc / cum_volume
 
-        open_price = current_day_data['open'].iloc[0]
-        df.loc[current_day_data.index, 'move_open'] = np.abs(current_day_data['close'] / open_price - 1)
+        open_price = current_day_data['open'].iloc[0] #bacause index is date, iloc to take chrini first
+        df.loc[current_day_data.index, 'move_open'] = np.abs(current_day_data['close'] / open_price - 1) #loc to not write for all days at once, only forcurr
 
-        spy_ret.loc[current_day] = current_day_data['close'].iloc[-1] / prev_day_data['close'].iloc[-1] - 1
+        spy_ret.loc[current_day] = current_day_data['close'].iloc[-1] / prev_day_data['close'].iloc[-1] - 1 #daily return for standard deviation
 
         if d > 14:
-            df.loc[current_day_data.index, 'spy_dvol'] = spy_ret.iloc[d - 15:d - 1].std(skipna=False)
+            df.loc[current_day_data.index, 'spy_dvol'] = spy_ret.iloc[d - 15:d - 1].std(skipna=False) #std sigma standart abweichung standard deviation
+#false not to ignore skipped values (because in formula 14 days)
 
-    market_open = pd.to_datetime(df.index.date.astype(str) + ' 09:30:00')
-    df['min_from_open'] = ((df.index - market_open) / pd.Timedelta(minutes=1)) + 1
-    df['minute_of_day'] = df['min_from_open'].round().astype(int)
+    market_open = pd.to_datetime(df.index.date.astype(str) + ' 09:30:00') #"2001-03-15" + " 09:30:00"
+    df['min_from_open'] = ((df.index - market_open) / pd.Timedelta(minutes=1)) + 1 #how much time frim open market / 1 min, float
+    df['minute_of_day'] = df['min_from_open'].round().astype(int) #float to int
 
     minute_groups = df.groupby('minute_of_day')
     df['move_open_rolling_mean'] = minute_groups['move_open'].transform(
         lambda x: x.rolling(window=14, min_periods=1).mean()
     )
-    df['sigma_open'] = minute_groups['move_open_rolling_mean'].transform(lambda x: x.shift(1))
+    df['sigma_open'] = minute_groups['move_open_rolling_mean'].transform(lambda x: x.shift(1)) #shift not cur day ( to avoid looking in the future)
 
     daily_close = df.groupby('day')['close'].last().shift(1)
     df['prev_close'] = df['day'].map(daily_close).astype(float)
@@ -140,7 +147,7 @@ if __name__ == '__main__':
             'Final Portfolio Value': cerebro.broker.getvalue()
         }
 
-        print(f"\n{'='*20} {label} {'='*20}")
+        print(f"\n {label} ")
         for k, v in analysis.items():
             print(f"{k}: {v:.2f}" if isinstance(v, float) else f"{k}: {v}")
 
@@ -149,7 +156,7 @@ if __name__ == '__main__':
     strat_train, cerebro_train, metrics_train = run_and_analyze(df_train, "TRAIN SET (First 75%)")
     strat_test, cerebro_test, metrics_test = run_and_analyze(df_test, "TEST SET (Last 25%)")
 
-    print(f"\n{'='*20} BENCHMARK COMPARISON (TEST SET) {'='*20}")
+    print(f"\n BENCHMARK COMPARISON (TEST SET) ")
     bh_start = df_test['close'].iloc[0]
     bh_end = df_test['close'].iloc[-1]
     bh_total_return = ((bh_end / bh_start) - 1) * 100
@@ -158,7 +165,7 @@ if __name__ == '__main__':
     print(f"Strategy Total Return: {strat_total_return:.2f}%")
     print(f"Buy & Hold Total Return: {bh_total_return:.2f}%")
 
-    print("\nGenerating plots... (3 windows will open simultaneously)")
+    print("\n Plots")
 
     plt.ion()
 
