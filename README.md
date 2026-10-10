@@ -12,10 +12,10 @@ Pre-calculates data:
 - Signal: Triggers only when price breaches bands and with VWAP, every 30 minutes.
 
 ### 3. PandasDataWithSignal (bt.feeds.PandasData)
-A custom data feed class that inherits and adds new line.
+- A custom data feed class that inherits and adds new line.
 
-### 4. Main Execution Block (if __name__ == '__main__':)
-Downloads and splits data. Prints indicators
+### 4. Main Execution Block 
+- Downloads and splits data. Prints indicators
 ## Details
 
 - Train/Test Split: 75/25 
