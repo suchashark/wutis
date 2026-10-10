@@ -2,6 +2,8 @@ import backtrader as bt
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+
 
 class MomentumStrategy(bt.Strategy):
 
@@ -72,65 +74,66 @@ def prepare_momentum_data(df):
     df['minute_of_day'] = df['min_from_open'].round().astype(int) #float to int
 
     minute_groups = df.groupby('minute_of_day')
+    #transform to treat as groups, for 14 days, periods to start from day 1, mean - average value
     df['move_open_rolling_mean'] = minute_groups['move_open'].transform(
         lambda x: x.rolling(window=14, min_periods=1).mean()
     )
     df['sigma_open'] = minute_groups['move_open_rolling_mean'].transform(lambda x: x.shift(1)) #shift not cur day ( to avoid looking in the future)
-
-    daily_close = df.groupby('day')['close'].last().shift(1)
+# borders for cur should be based on yeserday yy..
+    daily_close = df.groupby('day')['close'].last().shift(1) #for every day close price of last
     df['prev_close'] = df['day'].map(daily_close).astype(float)
-    df['open_price'] = df.groupby('day')['open'].transform('first')
+    df['open_price'] = df.groupby('day')['open'].transform('first') #for every day first open, transform drags first for the whole groupp
 
-    band_mult = 1
-    df['UB'] = np.maximum(df['open_price'], df['prev_close']) * (1 + band_mult * df['sigma_open'].fillna(0))
+    band_mult = 1 # Volatility Multiplier, if > 1, noize zone wider, cons
+    df['UB'] = np.maximum(df['open_price'], df['prev_close']) * (1 + band_mult * df['sigma_open'].fillna(0)) #UB =max(Open, Close )×(1+σ)
     df['LB'] = np.minimum(df['open_price'], df['prev_close']) * (1 - band_mult * df['sigma_open'].fillna(0))
-
-    df['buy_signal'] = (df['close'] > df['UB']) & (df['close'] > df['vwap'])
+#nan -> 0
+    df['buy_signal'] = (df['close'] > df['UB']) & (df['close'] > df['vwap']) #if price is above
     df['sell_signal'] = (df['close'] < df['LB']) & (df['close'] < df['vwap'])
-
     df['trade_bar'] = ((df['min_from_open'] - 1) % 30 == 0)
+    #"Trading is restricted to semi-hourly intervals, specifically at HH:00 and HH:30
 
-    df['target_position'] = 0
-    df.loc[df['buy_signal'] & df['trade_bar'], 'target_position'] = 1
+    df['target_position'] = 0 #flat by default
+    df.loc[df['buy_signal'] & df['trade_bar'], 'target_position'] = 1 #long and 0 or 30
     df.loc[df['sell_signal'] & df['trade_bar'], 'target_position'] = -1
 
-    def custom_ffill(group):
-        group = group.replace(0, np.nan).ffill().fillna(0)
+    def custom_ffill(group): #hold position
+        group = group.replace(0, np.nan).ffill().fillna(0) #nan for ffil, ffil drags the previous pos to nan, follna nan to 0
         return group
 
     df['target_position'] = df.groupby('day')['target_position'].transform(custom_ffill)
 
-    df['target_position'] = df.groupby('day')['target_position'].shift(1).fillna(0)
+    df['target_position'] = df.groupby('day')['target_position'].shift(1).fillna(0) #so the signal executed at next bar
 
     return df
 
 class PandasDataWithSignal(bt.feeds.PandasData):
-    lines = ('target_position',)
-    params = (('target_position', -1),)
+    lines = ('target_position',) # Open, High, Low, Close, Volume, Open, Interest + target_position
+    params = (('target_position', -1),) #-1 to look name as index in future mapping
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
+    
 
-    df = yf.download('SPY', period='60d', interval='5m', progress=False)
+    df = yf.download('SPY', period='60d', interval='5m') #ETF S&P 500
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.droplevel(1)
+        df.columns = df.columns.droplevel(1) #cuts extra layer with name
     df.columns = [col.lower() for col in df.columns]
 
     df = prepare_momentum_data(df)
 
     split_idx = int(len(df) * 0.75)
-    df_train = df.iloc[:split_idx]
+    df_train = df.iloc[:split_idx] #iloc not to shuffle
     df_test = df.iloc[split_idx:]
 
     def run_and_analyze(df_slice, label, initial_cash=100000):
         cerebro = bt.Cerebro()
         feed = PandasDataWithSignal(dataname=df_slice)
-        cerebro.adddata(feed)
+        cerebro.adddata(feed) #add data to cerebro
         cerebro.addstrategy(MomentumStrategy)
         cerebro.addsizer(bt.sizers.PercentSizer, percents=50)
 
-        cerebro.broker.setcommission(commission=0.0001)
-        cerebro.broker.set_slippage_perc(perc=0.0005)
+        cerebro.broker.setcommission(commission=0.0035, commtype=bt.CommInfoBase.COMM_FIXED) #to count as dollar
+        cerebro.broker.set_slippage_fixed(0.001, slip_open=True) #just a few milliseconds before the start of minute, so work with open
 
         cerebro.addanalyzer(bt.analyzers.SharpeRatio, _name='sharpe', riskfreerate=0.04, annualize=True, timeframe=bt.TimeFrame.Days)
         cerebro.addanalyzer(bt.analyzers.Returns, _name='returns')
@@ -169,7 +172,7 @@ if __name__ == '__main__':
 
     plt.ion()
 
-    cerebro_test.plot(iplot=False)
+    #cerebro_test.plot(iplot=False)
 
     fig1, ax1 = plt.subplots(figsize=(12, 5))
     fig1.canvas.manager.set_window_title('Metrics Comparison')
@@ -223,4 +226,4 @@ if __name__ == '__main__':
     plt.ioff()
     plt.show()
 
-    print("\nAll 3 plots are displayed. Close the windows to finish the script.")
+    print("\nClose the windows")
